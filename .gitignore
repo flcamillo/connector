@@ -1,0 +1,10 @@
+bootstrap
+*.zip
+*.exe
+*.json
+*.hcl
+*.tfstate
+*.backup
+.terraform
+notes.txt
+teste.txt
