@@ -1,4 +1,4 @@
-"# AWS Connector
+# AWS Connector
 
 Um projeto Go que integra com o **AWS Transfer Family Connector** para orquestrar e gerenciar operações de transferência de arquivos através do AWS EventBridge e AWS SQS.
 
