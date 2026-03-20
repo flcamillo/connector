@@ -5,5 +5,5 @@ bootstrap
 *.hcl
 *.tfstate
 *.backup
-.terraform
 *.txt
+.terraform
