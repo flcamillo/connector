@@ -251,7 +251,7 @@ func (p *Worker) processDirectoryListingCompleted(ctx context.Context, eventBrid
 		event.ReturnMessage = err.Error()
 		err2 := p.config.EventRepository.Save(ctx, event)
 		if err2 != nil {
-			slog.ErrorContext(ctx, "failed to update event",
+			slog.ErrorContext(ctx, "failed save event on repository",
 				slog.Any("event", event),
 				slog.Any("error", err),
 			)
@@ -273,12 +273,13 @@ func (p *Worker) processDirectoryListingCompleted(ctx context.Context, eventBrid
 			RemoveAfterDownload: event.RemoveAfterDownload,
 			Command:             internal.ConnectorCommandDownload,
 			Status:              internal.StatusCommandNotStarted,
+			ConnectorEventID:    "NA",
 		}
 		err = p.config.EventRepository.Save(ctx, fileEvent)
 		if err != nil {
 			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed to create reception event")
-			slog.ErrorContext(ctx, "failed to create reception event",
+			span.SetStatus(codes.Error, "failed save event on repository")
+			slog.ErrorContext(ctx, "failed save event on repository",
 				slog.Any("event", fileEvent),
 				slog.Any("error", err),
 			)
@@ -288,7 +289,7 @@ func (p *Worker) processDirectoryListingCompleted(ctx context.Context, eventBrid
 			event.ReturnMessage = err.Error()
 			err2 := p.config.EventRepository.Save(ctx, event)
 			if err2 != nil {
-				slog.ErrorContext(ctx, "failed to update event",
+				slog.ErrorContext(ctx, "failed save event on repository",
 					slog.Any("event", event),
 					slog.Any("error", err),
 				)
@@ -311,8 +312,8 @@ func (p *Worker) processDirectoryListingCompleted(ctx context.Context, eventBrid
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
 			slog.Any("error", err),
 		)
@@ -331,6 +332,7 @@ func (p *Worker) readConnectorListingOutputFile(ctx context.Context, bucket stri
 		return nil, err
 	}
 	defer obj.Body.Close()
+	output = &internal.SftpConnectorOutputDirectoryListing{}
 	err = json.NewDecoder(obj.Body).Decode(output)
 	if err != nil {
 		return nil, err
@@ -396,8 +398,8 @@ func (p *Worker) processDirectoryListingFailed(ctx context.Context, eventBridgeE
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
 			slog.Any("error", err),
 		)
@@ -443,8 +445,8 @@ func (p *Worker) processRemoteDeleteCompleted(ctx context.Context, eventBridgeEv
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
 			slog.Any("error", err),
 		)
@@ -496,8 +498,8 @@ func (p *Worker) processRemoteDeleteFailed(ctx context.Context, eventBridgeEvent
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
 			slog.Any("error", err),
 		)
@@ -512,19 +514,19 @@ func (p *Worker) processFileRetrieveCompleted(ctx context.Context, eventBridgeEv
 	ctx, span := p.tracer.Start(ctx, "processFileRetrieveCompleted")
 	defer span.End()
 	// recupera o evento do repositório
-	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.FileTransferId)
+	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.TransferId)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to get event from repository by file transfer id")
 		slog.ErrorContext(ctx, "failed to get event from repository by file transfer id",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 			slog.Any("error", err),
 		)
 		return false, err
 	}
 	if event == nil {
 		slog.WarnContext(ctx, "file transfer id not found",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 		)
 		return false, nil
 	}
@@ -549,9 +551,43 @@ func (p *Worker) processFileRetrieveCompleted(ctx context.Context, eventBridgeEv
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
+			slog.Any("error", err),
+		)
+		return false, err
+	}
+	if event.RemoveAfterDownload {
+		return p.executeRemoteDelete(ctx, event)
+	}
+	return false, nil
+}
+
+// Solicita a exclusão do arquivo remoto do servidor.
+func (p *Worker) executeRemoteDelete(ctx context.Context, event *repository.EventRecord) (retry bool, err error) {
+	ctx, span := p.tracer.Start(ctx, "executeRemoteDelete")
+	defer span.End()
+	deleteEvent := &repository.EventRecord{
+		Mft:                 event.Mft,
+		Mailbox:             event.Mailbox,
+		Product:             event.Product,
+		Connector:           event.Connector,
+		LocalPath:           event.LocalPath,
+		RemotePath:          event.RemotePath,
+		FileNameFilter:      event.FileNameFilter,
+		RemoveAfterDownload: event.RemoveAfterDownload,
+		FileSize:            event.FileSize,
+		Command:             internal.ConnectorCommandDelete,
+		Status:              internal.StatusCommandNotStarted,
+		ConnectorEventID:    "NA",
+	}
+	err = p.config.EventRepository.Save(ctx, deleteEvent)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
+			slog.Any("event", deleteEvent),
 			slog.Any("error", err),
 		)
 		return false, err
@@ -565,19 +601,19 @@ func (p *Worker) processFileRetrieveFailed(ctx context.Context, eventBridgeEvent
 	ctx, span := p.tracer.Start(ctx, "processFileRetrieveFailed")
 	defer span.End()
 	// recupera o evento do repositório
-	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.FileTransferId)
+	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.TransferId)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to get event from repository by file transfer id")
 		slog.ErrorContext(ctx, "failed to get event from repository by file transfer id",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 			slog.Any("error", err),
 		)
 		return false, err
 	}
 	if event == nil {
 		slog.WarnContext(ctx, "file transfer id not found",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 		)
 		return false, nil
 	}
@@ -602,8 +638,8 @@ func (p *Worker) processFileRetrieveFailed(ctx context.Context, eventBridgeEvent
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
 			slog.Any("error", err),
 		)
@@ -618,19 +654,19 @@ func (p *Worker) processFileSendCompleted(ctx context.Context, eventBridgeEvent 
 	ctx, span := p.tracer.Start(ctx, "processFileSendCompleted")
 	defer span.End()
 	// recupera o evento do repositório
-	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.FileTransferId)
+	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.TransferId)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to get event from repository by file transfer id")
 		slog.ErrorContext(ctx, "failed to get event from repository by file transfer id",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 			slog.Any("error", err),
 		)
 		return false, err
 	}
 	if event == nil {
 		slog.WarnContext(ctx, "file transfer id not found",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 		)
 		return false, nil
 	}
@@ -655,9 +691,35 @@ func (p *Worker) processFileSendCompleted(ctx context.Context, eventBridgeEvent 
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
+			slog.Any("error", err),
+		)
+		return false, err
+	}
+	// deve sempre remover o arquivo local
+	return p.executeLocalDelete(ctx, event)
+}
+
+// Exclui o arquivo local.
+func (p *Worker) executeLocalDelete(ctx context.Context, event *repository.EventRecord) (retry bool, err error) {
+	ctx, span := p.tracer.Start(ctx, "executeLocalDelete")
+	defer span.End()
+	_, bucket, prefix, file := internal.SplitUrlPath(event.LocalPath)
+	if prefix != "" {
+		file = fmt.Sprintf("%s/%s", prefix, file)
+	}
+	_, err = p.config.S3Service.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: &bucket,
+		Key:    &file,
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to delete local file")
+		slog.ErrorContext(ctx, "failed to delete local file",
+			slog.String("bucket", bucket),
+			slog.String("key", file),
 			slog.Any("error", err),
 		)
 		return false, err
@@ -671,19 +733,19 @@ func (p *Worker) processFileSendFailed(ctx context.Context, eventBridgeEvent *in
 	ctx, span := p.tracer.Start(ctx, "processFileSendFailed")
 	defer span.End()
 	// recupera o evento do repositório
-	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.FileTransferId)
+	event, err := p.config.EventRepository.FindByConnectorEventId(ctx, eventBridgeEvent.Detail.TransferId)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to get event from repository by file transfer id")
 		slog.ErrorContext(ctx, "failed to get event from repository by file transfer id",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 			slog.Any("error", err),
 		)
 		return false, err
 	}
 	if event == nil {
 		slog.WarnContext(ctx, "file transfer id not found",
-			slog.String("file_transfer_id", eventBridgeEvent.Detail.FileTransferId),
+			slog.String("file_transfer_id", eventBridgeEvent.Detail.TransferId),
 		)
 		return false, nil
 	}
@@ -708,8 +770,8 @@ func (p *Worker) processFileSendFailed(ctx context.Context, eventBridgeEvent *in
 	err = p.config.EventRepository.Save(ctx, event)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update event")
-		slog.ErrorContext(ctx, "failed to update event",
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
 			slog.Any("event", event),
 			slog.Any("error", err),
 		)
@@ -758,8 +820,8 @@ func (p *Worker) executeNextCommand(ctx context.Context, connector string) error
 		saved, err := p.config.EventRepository.SaveIfStatusIs(ctx, pending, internal.StatusCommandNotStarted)
 		if err != nil {
 			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed to update event by status")
-			slog.ErrorContext(ctx, "failed to update event by status",
+			span.SetStatus(codes.Error, "failed save event on repository by status")
+			slog.ErrorContext(ctx, "failed save event on repository by status",
 				slog.String("status", internal.StatusCommandNotStarted),
 				slog.Any("event", pending),
 				slog.Any("error", err),
@@ -773,23 +835,23 @@ func (p *Worker) executeNextCommand(ctx context.Context, connector string) error
 		}
 		err = p.sendEvent(ctx, pending)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed send event to connector")
+			slog.ErrorContext(ctx, "failed send event to connector",
+				slog.Any("event", pending),
+				slog.Any("error", err),
+			)
 			// se por algum motivo não for possível enfileirar o evento
 			// então ajusta o status no repositório
 			pending.Status = internal.StatusCommandNotStarted
 			err2 := p.config.EventRepository.Save(ctx, pending)
 			if err2 != nil {
-				slog.ErrorContext(ctx, "failed to update event",
+				slog.ErrorContext(ctx, "failed save event on repository",
 					slog.Any("event", pending),
 					slog.Any("error", err2),
 				)
 				err = errors.Join(err, err2)
 			}
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed send event to connector ")
-			slog.ErrorContext(ctx, "failed send event to connector ",
-				slog.Any("event", pending),
-				slog.Any("error", err),
-			)
 			return err
 		}
 	}

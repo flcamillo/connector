@@ -40,7 +40,8 @@ data "aws_iam_policy_document" "transfer_connector_access" {
     ]
     resources = [
       "${aws_s3_bucket.connector_upload.arn}",
-      "${aws_s3_bucket.connector_download.arn}"
+      "${aws_s3_bucket.connector_download.arn}",
+      "${aws_s3_bucket.connector_temporary.arn}"
     ]
   }
   statement {
@@ -51,7 +52,8 @@ data "aws_iam_policy_document" "transfer_connector_access" {
       "s3:PutObjectACL",
     ]
     resources = [
-      "${aws_s3_bucket.connector_upload.arn}/*",
+      "${aws_s3_bucket.connector_download.arn}/*",
+      "${aws_s3_bucket.connector_temporary.arn}/*"
     ]
   }
   statement {
@@ -65,7 +67,7 @@ data "aws_iam_policy_document" "transfer_connector_access" {
       "s3:GetObjectACL",
     ]
     resources = [
-      "${aws_s3_bucket.connector_download.arn}/*"
+      "${aws_s3_bucket.connector_upload.arn}/*"
     ]
   }
   statement {

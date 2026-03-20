@@ -210,7 +210,7 @@ func (p *Worker) processDeleteCommand(ctx context.Context, event *repository.Eve
 	// o comando de delete suporta a exclusão de apenas um arquivo por vez
 	// dessa forma, cada arquivo que precisar ser removido precisa de
 	// um evento no conector
-	_, err = p.config.TransferService.StartRemoteDelete(ctx, &transfer.StartRemoteDeleteInput{
+	output, err := p.config.TransferService.StartRemoteDelete(ctx, &transfer.StartRemoteDeleteInput{
 		ConnectorId: &event.Connector,
 		DeletePath:  &event.RemotePath,
 	})
@@ -220,6 +220,28 @@ func (p *Worker) processDeleteCommand(ctx context.Context, event *repository.Eve
 		slog.ErrorContext(ctx, "failed to start remote delete",
 			slog.String("connector", event.Connector),
 			slog.String("delete_path", event.RemotePath),
+			slog.Any("error", err),
+		)
+		event.ReturnCode = 1
+		event.ReturnMessage = err.Error()
+		event.Status = internal.StatusCommandCompleted
+		err2 := p.config.EventRepository.Save(ctx, event)
+		if err2 != nil {
+			slog.ErrorContext(ctx, "failed save event on repository",
+				slog.Any("event", event),
+				slog.Any("error", err2),
+			)
+		}
+		return true, err
+	}
+	event.ConnectorEventID = *output.DeleteId
+	event.Status = internal.StatusCommandExecuting
+	err = p.config.EventRepository.Save(ctx, event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
+			slog.Any("event", event),
 			slog.Any("error", err),
 		)
 		return true, err
@@ -263,7 +285,7 @@ func (p *Worker) processListCommand(ctx context.Context, event *repository.Event
 	// o conector irá gerar um JSON com a relação de arquivos no bucket
 	// temporário, e o arquivo terá como nome: <connector_id>-<listing_id>.json
 	maxItens := int32(10000)
-	_, err = p.config.TransferService.StartDirectoryListing(ctx, &transfer.StartDirectoryListingInput{
+	output, err := p.config.TransferService.StartDirectoryListing(ctx, &transfer.StartDirectoryListingInput{
 		ConnectorId:         &event.Connector,
 		RemoteDirectoryPath: &remotePath,
 		OutputDirectoryPath: &temporaryPath,
@@ -277,6 +299,28 @@ func (p *Worker) processListCommand(ctx context.Context, event *repository.Event
 			slog.String("remote_path", remotePath),
 			slog.String("temporary_path", temporaryPath),
 			slog.Int("max_itens", int(maxItens)),
+			slog.Any("error", err),
+		)
+		event.ReturnCode = 1
+		event.ReturnMessage = err.Error()
+		event.Status = internal.StatusCommandCompleted
+		err2 := p.config.EventRepository.Save(ctx, event)
+		if err2 != nil {
+			slog.ErrorContext(ctx, "failed save event on repository",
+				slog.Any("event", event),
+				slog.Any("error", err2),
+			)
+		}
+		return true, err
+	}
+	event.ConnectorEventID = *output.ListingId
+	event.Status = internal.StatusCommandExecuting
+	err = p.config.EventRepository.Save(ctx, event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
+			slog.Any("event", event),
 			slog.Any("error", err),
 		)
 		return true, err
@@ -332,7 +376,7 @@ func (p *Worker) processUploadCommand(ctx context.Context, event *repository.Eve
 	// o conector suporta o envio de mais de um arquivo por vez, porém
 	// será feito o envio individual para facilitar o controle do
 	// paralelismo
-	_, err = p.config.TransferService.StartFileTransfer(ctx, &transfer.StartFileTransferInput{
+	output, err := p.config.TransferService.StartFileTransfer(ctx, &transfer.StartFileTransferInput{
 		ConnectorId:         &event.Connector,
 		RemoteDirectoryPath: &remotePath,
 		SendFilePaths:       localPath,
@@ -344,6 +388,28 @@ func (p *Worker) processUploadCommand(ctx context.Context, event *repository.Eve
 			slog.String("connector", event.Connector),
 			slog.String("remote_path", remotePath),
 			slog.Any("local_paths", localPath),
+			slog.Any("error", err),
+		)
+		event.ReturnCode = 1
+		event.ReturnMessage = err.Error()
+		event.Status = internal.StatusCommandCompleted
+		err2 := p.config.EventRepository.Save(ctx, event)
+		if err2 != nil {
+			slog.ErrorContext(ctx, "failed save event on repository",
+				slog.Any("event", event),
+				slog.Any("error", err2),
+			)
+		}
+		return true, err
+	}
+	event.ConnectorEventID = *output.TransferId
+	event.Status = internal.StatusCommandExecuting
+	err = p.config.EventRepository.Save(ctx, event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
+			slog.Any("event", event),
 			slog.Any("error", err),
 		)
 		return true, err
@@ -368,7 +434,7 @@ func (p *Worker) processDownloadCommand(ctx context.Context, event *repository.E
 	// s3://bucket/prefix1/prefix2/file.txt
 	// o caminho correto para o conector receber o arquivo para do servidor
 	// remoto é: bucket/prefix1/prefix2/file.txt
-	_, bucket, prefix, file := internal.SplitUrlPath(event.LocalPath)
+	_, bucket, prefix, _ := internal.SplitUrlPath(event.LocalPath)
 	if bucket == "" {
 		err = fmt.Errorf("missing bucket name")
 		span.RecordError(err)
@@ -382,18 +448,13 @@ func (p *Worker) processDownloadCommand(ctx context.Context, event *repository.E
 	if prefix != "" {
 		prefix = fmt.Sprintf("/%s", prefix)
 	}
-	// assume o nome original se não houver padrão para gravar localmente
-	if file == "" {
-		file = "#FN#FE"
-	}
 	// deve converter as variaveis especiais apenas do caminho local
 	// pois o caminho remoto é o caminho real do arquivo a ser enviado
-	file, extension := internal.FileNameExtension(event.RemotePath)
-	localPath := internal.ParseVariables(fmt.Sprintf("/%s%s/%s", bucket, prefix, file), fmt.Sprintf("%s%s", file, extension))
+	localPath := internal.ParseVariables(fmt.Sprintf("/%s%s", bucket, prefix), "")
 	// o conector suporta a recepção de mais de um arquivo por vez, porém
 	// será feito a recepção individual para facilitar o controle do
 	// paralelismo
-	_, err = p.config.TransferService.StartFileTransfer(ctx, &transfer.StartFileTransferInput{
+	output, err := p.config.TransferService.StartFileTransfer(ctx, &transfer.StartFileTransferInput{
 		ConnectorId:        &event.Connector,
 		LocalDirectoryPath: &localPath,
 		RetrieveFilePaths:  []string{event.RemotePath},
@@ -404,6 +465,28 @@ func (p *Worker) processDownloadCommand(ctx context.Context, event *repository.E
 		slog.ErrorContext(ctx, "failed to start file transfer",
 			slog.String("connector", event.Connector),
 			slog.String("local_path", localPath),
+			slog.Any("error", err),
+		)
+		event.ReturnCode = 1
+		event.ReturnMessage = err.Error()
+		event.Status = internal.StatusCommandCompleted
+		err2 := p.config.EventRepository.Save(ctx, event)
+		if err2 != nil {
+			slog.ErrorContext(ctx, "failed save event on repository",
+				slog.Any("event", event),
+				slog.Any("error", err2),
+			)
+		}
+		return true, err
+	}
+	event.ConnectorEventID = *output.TransferId
+	event.Status = internal.StatusCommandExecuting
+	err = p.config.EventRepository.Save(ctx, event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed save event on repository")
+		slog.ErrorContext(ctx, "failed save event on repository",
+			slog.Any("event", event),
 			slog.Any("error", err),
 		)
 		return true, err

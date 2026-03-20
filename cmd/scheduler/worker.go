@@ -421,8 +421,8 @@ func (p *Worker) executeUpload(ctx context.Context, user *repository.UserRecord)
 			err := p.config.EventRepository.Save(ctx, event)
 			if err != nil {
 				span.RecordError(err)
-				span.SetStatus(codes.Error, "failed to create send event")
-				slog.ErrorContext(ctx, "failed to create send event",
+				span.SetStatus(codes.Error, "failed save event on repository")
+				slog.ErrorContext(ctx, "failed save event on repository",
 					slog.Any("event", event),
 					slog.Any("error", err),
 				)
@@ -481,8 +481,8 @@ func (p *Worker) executeNextCommand(ctx context.Context, connector string) error
 		saved, err := p.config.EventRepository.SaveIfStatusIs(ctx, pending, internal.StatusCommandNotStarted)
 		if err != nil {
 			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed to update event by status")
-			slog.ErrorContext(ctx, "failed to update event by status",
+			span.SetStatus(codes.Error, "failed save event on repository by status")
+			slog.ErrorContext(ctx, "failed save event on repository by status",
 				slog.String("status", internal.StatusCommandNotStarted),
 				slog.Any("event", pending),
 				slog.Any("error", err),
@@ -496,23 +496,23 @@ func (p *Worker) executeNextCommand(ctx context.Context, connector string) error
 		}
 		err = p.sendEvent(ctx, pending)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed send event to connector")
+			slog.ErrorContext(ctx, "failed send event to connector",
+				slog.Any("event", pending),
+				slog.Any("error", err),
+			)
 			// se por algum motivo não for possível enfileirar o evento
 			// então ajusta o status no repositório
 			pending.Status = internal.StatusCommandNotStarted
 			err2 := p.config.EventRepository.Save(ctx, pending)
 			if err2 != nil {
-				slog.ErrorContext(ctx, "failed to update event",
+				slog.ErrorContext(ctx, "failed save event on repository",
 					slog.Any("event", pending),
 					slog.Any("error", err2),
 				)
 				err = errors.Join(err, err2)
 			}
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed send event to connector ")
-			slog.ErrorContext(ctx, "failed send event to connector ",
-				slog.Any("event", pending),
-				slog.Any("error", err),
-			)
 			return err
 		}
 	}

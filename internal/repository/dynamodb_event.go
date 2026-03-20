@@ -282,6 +282,7 @@ func (p *DynamoDBEvent) Delete(ctx context.Context, id string) (record *EventRec
 	if out.Attributes == nil {
 		return nil, nil
 	}
+	record = &EventRecord{}
 	err = attributevalue.UnmarshalMap(out.Attributes, &record)
 	if err != nil {
 		slog.ErrorContext(ctx, fmt.Sprintf("unable to convert dynamodb object to record, %s", err))
@@ -305,6 +306,7 @@ func (p *DynamoDBEvent) Get(ctx context.Context, id string) (record *EventRecord
 	if out.Item == nil {
 		return nil, nil
 	}
+	record = &EventRecord{}
 	err = attributevalue.UnmarshalMap(out.Item, &record)
 	if err != nil {
 		slog.ErrorContext(ctx, fmt.Sprintf("unable to convert dynamodb object to record, %s", err))
@@ -502,6 +504,7 @@ func (p *DynamoDBEvent) FindByConnectorEventId(ctx context.Context, connectorEve
 			return nil, err
 		}
 		for _, item := range page.Items {
+			record := &EventRecord{}
 			err = attributevalue.UnmarshalMap(item, record)
 			if err != nil {
 				slog.ErrorContext(ctx, fmt.Sprintf("unable to convert dynamodb object to record, %s", err))

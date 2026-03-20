@@ -225,6 +225,7 @@ func (p *DynamoDBUser) Delete(ctx context.Context, id string) (record *UserRecor
 	if out.Attributes == nil {
 		return nil, nil
 	}
+	record = &UserRecord{}
 	err = attributevalue.UnmarshalMap(out.Attributes, &record)
 	if err != nil {
 		slog.ErrorContext(ctx, fmt.Sprintf("unable to convert dynamodb object to record, %s", err))
@@ -248,6 +249,7 @@ func (p *DynamoDBUser) Get(ctx context.Context, id string) (record *UserRecord, 
 	if out.Item == nil {
 		return nil, nil
 	}
+	record = &UserRecord{}
 	err = attributevalue.UnmarshalMap(out.Item, &record)
 	if err != nil {
 		slog.ErrorContext(ctx, fmt.Sprintf("unable to convert dynamodb object to record, %s", err))
