@@ -6,5 +6,4 @@ bootstrap
 *.tfstate
 *.backup
 .terraform
-notes.txt
-teste.txt
+*.txt
