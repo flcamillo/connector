@@ -4,7 +4,6 @@ import (
 	"awsconnector/internal"
 	"awsconnector/internal/repository"
 	"context"
-	"log/slog"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -37,14 +36,16 @@ type ControllerConfig struct {
 // Controller é a estrutura principal que gerencia o processo de consumo e
 // processamento de mensagens da fila AWS SQS.
 type Controller struct {
+	// Configuração gerais.
+	config *ControllerConfig
 	// Tracer para criar spans de telemetria durante o processo.
 	tracer trace.Tracer
 	// SqsConsumer para consumir mensagens da fila AWS SQS.
 	consumer *SqsConsumer
 	// Worker para processar as mensagens recebidas da fila AWS SQS.
 	workers []*Worker
-	// Canal para sinalizar o encerramento do processo.
-	stopChan chan int
+	// Função para cancelar a execução.
+	cancel context.CancelFunc
 }
 
 // Construtor para criar uma nova instância do Controller.
@@ -62,52 +63,54 @@ func NewController(config *ControllerConfig) *Controller {
 		workers = append(workers, NewWorker(configWorker))
 	}
 	return &Controller{
+		config: config,
 		tracer: otel.Tracer("Controller"),
 		consumer: NewSqsConsumer(&SqsConsumerConfig{
 			SqsService:  config.SqsService,
 			QueueUrl:    config.SqsEventBridgeUrl,
 			MessageChan: config.MessageChan,
 		}),
-		workers:  workers,
-		stopChan: make(chan int),
+		workers: workers,
 	}
 }
 
 // Inicia o processo de consumo e processamento de mensagens da fila AWS SQS.
 func (p *Controller) Start(ctx context.Context) error {
-	var wg sync.WaitGroup
-	var err error
+	ctx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	// agenda uma funcão para aguardar todos os processos terminarem
+	// os workers só serão encerrados caso o canal de mensagem
+	// seja fechado
+	wg := sync.WaitGroup{}
+	defer func() {
+		close(p.config.MessageChan)
+		wg.Wait()
+	}()
+	// cria um channel para receber erros dos processos
+	errChan := make(chan error, 1)
 	// incia todos os workers em processos separados
-	for k, worker := range p.workers {
-		wg.Add(1)
-		go func(id int, worker *Worker) {
-			defer wg.Done()
+	for _, worker := range p.workers {
+		wg.Go(func() {
 			worker.Start(ctx)
-		}(k, worker)
+		})
 	}
 	// inicia o consumidor em um processo separado
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err = p.consumer.Start(ctx)
-		if err != nil {
-			slog.ErrorContext(ctx, "failed to start SqsConsumer",
-				slog.Any("error", err),
-			)
-			return
-		}
-	}()
-	// aguarda a conclusão de todos os processos
-	wg.Wait()
-	if err != nil {
+	wg.Go(func() {
+		errChan <- p.consumer.Start(ctx)
+	})
+	// aguarda por erro ou cancelamento
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errChan:
 		return err
 	}
-	return nil
+
 }
 
 // Encerra o processo de consumo e processamento de mensagens da fila AWS SQS.
 func (p *Controller) Stop(ctx context.Context) {
-	p.consumer.Stop(ctx)
-	// os workers serão encerrados automaticamente quando o canal de
-	// mensagens for fechado pelo consumidor
+	if p.cancel != nil {
+		p.cancel()
+	}
 }

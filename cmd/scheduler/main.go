@@ -243,14 +243,11 @@ func main() {
 		EventRepository:   eventRepository,
 		MaxCommands:       maxCommands,
 	})
-	go func() {
-		errChan <- scheduler.Start(ctx)
-	}()
+	errChan <- scheduler.Start(ctx)
 	// aguarda o sinal de término
 	select {
 	case <-ctx.Done():
 		slog.WarnContext(ctx, "received shutdown signal")
-		stop()
 	case err := <-errChan:
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to start Scheduler",

@@ -31,8 +31,8 @@ type SqsConsumer struct {
 	config *SqsConsumerConfig
 	// Tracer para criar spans de telemetria durante o processo.
 	tracer trace.Tracer
-	// Canal para sinalizar o encerramento do processo.
-	stopChan chan int
+	// Função para cancelar a execução.
+	cancel context.CancelFunc
 	// metricas de requisições
 	messageCounter       metric.Int64Counter
 	messageWaitHistogram metric.Float64Histogram
@@ -41,9 +41,8 @@ type SqsConsumer struct {
 // Construtor para criar uma nova instância do SqsConsumer.
 func NewSqsConsumer(config *SqsConsumerConfig) *SqsConsumer {
 	consumer := &SqsConsumer{
-		tracer:   otel.Tracer("SQSConsumer"),
-		config:   config,
-		stopChan: make(chan int),
+		tracer: otel.Tracer("SQSConsumer"),
+		config: config,
 	}
 	// configura as metricas
 	meter := otel.Meter("SQSConsumer.metrics")
@@ -67,19 +66,22 @@ func NewSqsConsumer(config *SqsConsumerConfig) *SqsConsumer {
 // Método para sinalizar o encerramento do processo de consumo de mensagens
 // da fila AWS SQS.
 func (p *SqsConsumer) Stop(ctx context.Context) {
-	slog.InfoContext(ctx, "stopping SqsConsumer...")
-	p.stopChan <- 0
+	if p.cancel != nil {
+		p.cancel()
+	}
 }
 
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
 func (p *SqsConsumer) Start(ctx context.Context) error {
-	defer close(p.config.MessageChan)
+	ctx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	defer func() {
+		slog.WarnContext(ctx, "SqsConsumer stopped")
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			slog.InfoContext(ctx, "stopping SqsConsumer due to context cancellation...")
-			return nil
-		case <-p.stopChan:
 			return nil
 		default:
 			ctx, span := p.tracer.Start(ctx, "Waiting.For.Messages")
@@ -126,13 +128,20 @@ func (p *SqsConsumer) receiveMessage(ctx context.Context) (messagesContext []*in
 		return nil, err
 	}
 	for _, v := range out.Messages {
+		// define a função para fazer o commit da mensagem processada.
+		commitFunc := func() error {
+			_, err := p.config.SqsService.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+				QueueUrl:      &p.config.QueueUrl,
+				ReceiptHandle: v.ReceiptHandle,
+			})
+			return err
+		}
 		messagesContext = append(messagesContext, &internal.MessageContext{
-			Context:       ctx,
-			Id:            *v.MessageId,
-			ReceiptHandle: *v.ReceiptHandle,
-			Body:          *v.Body,
-			QueueUrl:      p.config.QueueUrl,
-			Received:      time.Now(),
+			Context:  ctx,
+			Id:       *v.MessageId,
+			Body:     *v.Body,
+			Received: time.Now(),
+			Commit:   commitFunc,
 		})
 	}
 	return messagesContext, nil

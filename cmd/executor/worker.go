@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/transfer"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -23,8 +22,6 @@ import (
 type WorkerConfig struct {
 	// Client AWS Transfer para executar operações no conector.
 	TransferService internal.TransferService
-	// Client AWS SQS para executar operações na fila.
-	SqsService internal.SqsService
 	// Client AWS S3 para executar operações no bucket.
 	S3Service internal.S3Service
 	// Canal para as menagens recebidas para processamento.
@@ -42,8 +39,8 @@ type Worker struct {
 	config *WorkerConfig
 	// Tracer para criar spans de telemetria durante o processo.
 	tracer trace.Tracer
-	// Canal para sinalizar o encerramento do processo.
-	stopChan chan int
+	// Função para cancelar a execução.
+	cancel context.CancelFunc
 	// metricas de requisições
 	messageProcessed     metric.Int64Counter
 	messageFailed        metric.Int64Counter
@@ -53,9 +50,8 @@ type Worker struct {
 // Construtor para criar uma nova instância do Worker
 func NewWorker(config *WorkerConfig) *Worker {
 	worker := &Worker{
-		tracer:   otel.Tracer("Worker"),
-		config:   config,
-		stopChan: make(chan int),
+		tracer: otel.Tracer("Worker"),
+		config: config,
 	}
 	// configura as metricas
 	meter := otel.Meter("Worker.metrics")
@@ -85,18 +81,22 @@ func NewWorker(config *WorkerConfig) *Worker {
 
 // Método para sinalizar o encerramento do processo de consumo de mensagens da fila AWS SQS
 func (p *Worker) Stop(ctx context.Context) {
-	slog.InfoContext(ctx, "stopping Worker...")
-	p.stopChan <- 0
+	if p.cancel != nil {
+		p.cancel()
+	}
 }
 
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
 func (p *Worker) Start(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	defer func() {
+		slog.WarnContext(ctx, "Worker stopped")
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			slog.InfoContext(ctx, "stopping Worker due to context cancellation...")
-			return
-		case <-p.stopChan:
 			return
 		default:
 			messageContext, ok := <-p.config.MessageChan
@@ -121,10 +121,7 @@ func (p *Worker) Start(ctx context.Context) {
 					p.messageProcessed.Add(messageContext.Context, 1)
 				}
 				p.messageWaitHistogram.Record(messageContext.Context, time.Since(messageContext.Received).Seconds())
-				_, err := p.config.SqsService.DeleteMessage(messageContext.Context, &sqs.DeleteMessageInput{
-					QueueUrl:      &messageContext.QueueUrl,
-					ReceiptHandle: &messageContext.ReceiptHandle,
-				})
+				err := messageContext.Commit()
 				if err != nil {
 					slog.ErrorContext(messageContext.Context, "failed to delete message",
 						slog.String("message_id", messageContext.Id),

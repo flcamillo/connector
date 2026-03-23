@@ -184,18 +184,17 @@ func main() {
 		EventRepository:   eventRepository,
 		TemporaryFilePath: s3TemporaryPath,
 	})
-	go func() {
-		errChan <- executor.Start(ctx)
-	}()
+	errChan <- executor.Start(ctx)
 	// aguarda o sinal de término
 	select {
-	case err := <-errChan:
-		slog.ErrorContext(ctx, "failed to start Executor",
-			slog.Any("error", err),
-		)
 	case <-ctx.Done():
 		slog.WarnContext(ctx, "received shutdown signal")
-		stop()
+	case err := <-errChan:
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to start Executor",
+				slog.Any("error", err),
+			)
+		}
 	}
 	// encerra a telemetria
 	err := otelShutdown(context.Background())

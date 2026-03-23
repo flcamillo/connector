@@ -195,18 +195,17 @@ func main() {
 		EventRepository:   eventRepository,
 		MaxCommands:       maxCommands,
 	})
-	go func() {
-		errChan <- executor.Start(ctx)
-	}()
+	errChan <- executor.Start(ctx)
 	// aguarda o sinal de término
 	select {
-	case err := <-errChan:
-		slog.ErrorContext(ctx, "failed to start Controller",
-			slog.Any("error", err),
-		)
 	case <-ctx.Done():
 		slog.WarnContext(ctx, "received shutdown signal")
-		stop()
+	case err := <-errChan:
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to start Controller",
+				slog.Any("error", err),
+			)
+		}
 	}
 	// encerra a telemetria
 	err := otelShutdown(context.Background())
