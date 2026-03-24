@@ -39,8 +39,6 @@ type Worker struct {
 	config *WorkerConfig
 	// Tracer para criar spans de telemetria durante o processo.
 	tracer trace.Tracer
-	// Função para cancelar a execução.
-	cancel context.CancelFunc
 	// metricas de requisições
 	messageProcessed     metric.Int64Counter
 	messageFailed        metric.Int64Counter
@@ -79,20 +77,9 @@ func NewWorker(config *WorkerConfig) *Worker {
 	return worker
 }
 
-// Método para sinalizar o encerramento do processo de consumo de mensagens da fila AWS SQS
-func (p *Worker) Stop(ctx context.Context) {
-	if p.cancel != nil {
-		p.cancel()
-	}
-}
-
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
-func (p *Worker) Start(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-	p.cancel = cancel
-	defer func() {
-		slog.WarnContext(ctx, "Worker stopped")
-	}()
+func (p *Worker) Run(ctx context.Context) {
+	defer slog.WarnContext(ctx, "Worker stopped")
 	for {
 		select {
 		case <-ctx.Done():

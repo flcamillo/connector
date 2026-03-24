@@ -31,8 +31,6 @@ type SqsConsumer struct {
 	config *SqsConsumerConfig
 	// Tracer para criar spans de telemetria durante o processo.
 	tracer trace.Tracer
-	// Função para cancelar a execução.
-	cancel context.CancelFunc
 	// metricas de requisições
 	messageCounter       metric.Int64Counter
 	messageWaitHistogram metric.Float64Histogram
@@ -63,21 +61,9 @@ func NewSqsConsumer(config *SqsConsumerConfig) *SqsConsumer {
 	return consumer
 }
 
-// Método para sinalizar o encerramento do processo de consumo de mensagens
-// da fila AWS SQS.
-func (p *SqsConsumer) Stop(ctx context.Context) {
-	if p.cancel != nil {
-		p.cancel()
-	}
-}
-
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
-func (p *SqsConsumer) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	p.cancel = cancel
-	defer func() {
-		slog.WarnContext(ctx, "SqsConsumer stopped")
-	}()
+func (p *SqsConsumer) Run(ctx context.Context) error {
+	defer slog.WarnContext(ctx, "SqsConsumer stopped")
 	for {
 		select {
 		case <-ctx.Done():

@@ -95,12 +95,8 @@ func (p *Worker) Stop(ctx context.Context) {
 }
 
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
-func (p *Worker) Start(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-	p.cancel = cancel
-	defer func() {
-		slog.WarnContext(ctx, "Worker stopped")
-	}()
+func (p *Worker) Run(ctx context.Context) {
+	defer slog.WarnContext(ctx, "Worker stopped")
 	for {
 		select {
 		case <-ctx.Done():

@@ -44,8 +44,6 @@ type Controller struct {
 	consumer *SqsConsumer
 	// Worker para processar as mensagens recebidas da fila AWS SQS.
 	workers []*Worker
-	// Função para cancelar a execução.
-	cancel context.CancelFunc
 }
 
 // Construtor para criar uma nova instância do Controller.
@@ -75,12 +73,9 @@ func NewController(config *ControllerConfig) *Controller {
 }
 
 // Inicia o processo de consumo e processamento de mensagens da fila AWS SQS.
-func (p *Controller) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	p.cancel = cancel
+func (p *Controller) Run(ctx context.Context) error {
 	// agenda uma funcão para aguardar todos os processos terminarem
-	// os workers só serão encerrados caso o canal de mensagem
-	// seja fechado
+	// os workers só serão encerrados com o fechamando do canal de mensagens
 	wg := sync.WaitGroup{}
 	defer func() {
 		close(p.config.MessageChan)
@@ -91,12 +86,12 @@ func (p *Controller) Start(ctx context.Context) error {
 	// incia todos os workers em processos separados
 	for _, worker := range p.workers {
 		wg.Go(func() {
-			worker.Start(ctx)
+			worker.Run(ctx)
 		})
 	}
 	// inicia o consumidor em um processo separado
 	wg.Go(func() {
-		errChan <- p.consumer.Start(ctx)
+		errChan <- p.consumer.Run(ctx)
 	})
 	// aguarda por erro ou cancelamento
 	select {
@@ -104,13 +99,5 @@ func (p *Controller) Start(ctx context.Context) error {
 		return nil
 	case err := <-errChan:
 		return err
-	}
-
-}
-
-// Encerra o processo de consumo e processamento de mensagens da fila AWS SQS.
-func (p *Controller) Stop(ctx context.Context) {
-	if p.cancel != nil {
-		p.cancel()
 	}
 }

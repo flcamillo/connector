@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -243,7 +244,11 @@ func main() {
 		EventRepository:   eventRepository,
 		MaxCommands:       maxCommands,
 	})
-	errChan <- scheduler.Start(ctx)
+	wg := &sync.WaitGroup{}
+	wg.Go(func() {
+		slog.InfoContext(ctx, "starting Scheduler...")
+		errChan <- scheduler.Run(ctx)
+	})
 	// aguarda o sinal de término
 	select {
 	case <-ctx.Done():
@@ -255,6 +260,7 @@ func main() {
 			)
 		}
 	}
+	wg.Wait()
 	// encerra a telemetria
 	err := otelShutdown(context.Background())
 	if err != nil {
