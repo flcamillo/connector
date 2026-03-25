@@ -58,7 +58,7 @@ func NewController(config *ControllerConfig) *Controller {
 		MaxCommands:     config.MaxCommands,
 	}
 	for i := 0; i < config.MaxWorkers; i++ {
-		workers = append(workers, NewWorker(configWorker))
+		workers = append(workers, NewWorker(i, configWorker))
 	}
 	return &Controller{
 		config: config,

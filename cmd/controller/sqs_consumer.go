@@ -63,6 +63,7 @@ func NewSqsConsumer(config *SqsConsumerConfig) *SqsConsumer {
 
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
 func (p *SqsConsumer) Run(ctx context.Context) error {
+	slog.InfoContext(ctx, "starting SqsConsumer...")
 	defer slog.WarnContext(ctx, "SqsConsumer stopped")
 	for {
 		select {
@@ -115,20 +116,26 @@ func (p *SqsConsumer) receiveMessage(ctx context.Context) (messagesContext []*in
 	}
 	for _, v := range out.Messages {
 		// define a função para fazer o commit da mensagem processada.
-		commitFunc := func() error {
-			_, err := p.config.SqsService.DeleteMessage(ctx, &sqs.DeleteMessageInput{
-				QueueUrl:      &p.config.QueueUrl,
-				ReceiptHandle: v.ReceiptHandle,
-			})
-			return err
+		commitFunc := func(ctx context.Context) error {
+			return p.commitMessage(ctx, *v.ReceiptHandle)
 		}
 		messagesContext = append(messagesContext, &internal.MessageContext{
 			Context:  ctx,
 			Id:       *v.MessageId,
 			Body:     *v.Body,
 			Received: time.Now(),
+			Source:   "AWS SQS",
 			Commit:   commitFunc,
 		})
 	}
 	return messagesContext, nil
+}
+
+// Realiza o commit da mensagem no AWS SQS.
+func (p *SqsConsumer) commitMessage(ctx context.Context, receiptHandle string) error {
+	_, err := p.config.SqsService.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      &p.config.QueueUrl,
+		ReceiptHandle: &receiptHandle,
+	})
+	return err
 }

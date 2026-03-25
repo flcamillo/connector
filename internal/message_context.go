@@ -5,11 +5,18 @@ import (
 	"time"
 )
 
-// Define a estrutura para representar uma mensagem recebida da fila AWS SQS.
+// Define a estrutura para representar uma mensagem recebida de uma fila.
 type MessageContext struct {
-	Context  context.Context
-	Id       string
-	Body     string
+	// Contexto de origem da recepção da mensagem.
+	Context context.Context
+	// Código de identificação da mensagem.
+	Id string
+	// Dados da mensagem recebida.
+	Body string
+	// Data de recebimento.
 	Received time.Time
-	Commit   func() error
+	// Origem da mensagem (Kafka, AWS SQS, etc)
+	Source string
+	// Função para execução do commit da mensagem.
+	Commit func(ctx context.Context) error
 }

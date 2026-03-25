@@ -40,6 +40,8 @@ type WorkerConfig struct {
 // Define a estrutura para o processo responsável por processar as mensagens
 // recebidas da fila AWS SQS.
 type Worker struct {
+	// Identificador do worker.
+	id int
 	// Configuração gerais.
 	config *WorkerConfig
 	// Tracer para criar spans de telemetria durante o processo.
@@ -51,8 +53,9 @@ type Worker struct {
 }
 
 // Construtor para criar uma nova instância do Worker
-func NewWorker(config *WorkerConfig) *Worker {
+func NewWorker(id int, config *WorkerConfig) *Worker {
 	worker := &Worker{
+		id:     id,
 		tracer: otel.Tracer("Worker"),
 		config: config,
 	}
@@ -84,7 +87,8 @@ func NewWorker(config *WorkerConfig) *Worker {
 
 // Método para iniciar o processo de consumo de mensagens da fila AWS SQS.
 func (p *Worker) Run(ctx context.Context) {
-	defer slog.WarnContext(ctx, "Worker stopped")
+	slog.InfoContext(ctx, fmt.Sprintf("starting Worker {%d}...", p.id))
+	defer slog.WarnContext(ctx, fmt.Sprintf("Worker stopped {%d}", p.id))
 	for {
 		select {
 		case <-ctx.Done():
@@ -113,7 +117,7 @@ func (p *Worker) Run(ctx context.Context) {
 					p.messageProcessed.Add(messageContext.Context, 1)
 				}
 				p.messageWaitHistogram.Record(messageContext.Context, time.Since(messageContext.Received).Seconds())
-				err := messageContext.Commit()
+				err := messageContext.Commit(messageContext.Context)
 				if err != nil {
 					slog.ErrorContext(messageContext.Context, "failed to delete message",
 						slog.String("message_id", messageContext.Id),

@@ -255,7 +255,7 @@ func main() {
 		slog.WarnContext(ctx, "received shutdown signal")
 	case err := <-errChan:
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to start Scheduler",
+			slog.ErrorContext(ctx, "Scheduler stopped",
 				slog.Any("error", err),
 			)
 		}

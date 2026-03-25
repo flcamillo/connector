@@ -196,7 +196,7 @@ func main() {
 		slog.WarnContext(ctx, "received shutdown signal")
 	case err := <-errChan:
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to start Executor",
+			slog.ErrorContext(ctx, "Executor stopped",
 				slog.Any("error", err),
 			)
 		}

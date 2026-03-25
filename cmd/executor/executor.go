@@ -54,7 +54,7 @@ func NewExecutor(config *ExecutorConfig) *Executor {
 		TemporaryFilePath: config.TemporaryFilePath,
 	}
 	for i := 0; i < config.MaxWorkers; i++ {
-		workers = append(workers, NewWorker(configWorker))
+		workers = append(workers, NewWorker(i, configWorker))
 	}
 	return &Executor{
 		config: config,

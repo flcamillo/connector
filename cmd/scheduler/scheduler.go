@@ -61,7 +61,7 @@ func NewScheduler(config *SchedulerConfig) *Scheduler {
 		MaxCommands:     config.MaxCommands,
 	}
 	for i := 0; i < config.MaxWorkers; i++ {
-		workers = append(workers, NewWorker(configWorker))
+		workers = append(workers, NewWorker(i, configWorker))
 	}
 	return &Scheduler{
 		config: config,
@@ -94,7 +94,7 @@ func (p *Scheduler) Run(ctx context.Context) error {
 	}
 	// inicia o consumidor em um processo separado
 	wg.Go(func() {
-		errChan <- p.consumer.Start(ctx)
+		errChan <- p.consumer.Run(ctx)
 	})
 	// aguarda por erro ou cancelamento
 	select {
